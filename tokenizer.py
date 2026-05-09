@@ -13,17 +13,17 @@ class multiTokenizer:
         pass
 
 class Tokenizer: 
-    def __init__(self): 
-        self.input_path = "TinyStoriesV2-GPT4-valid.txt"
+    def __init__(self, input_path: str): 
+        self.input_path = input_path
 
         self.vocab = defaultdict(int) 
-        self.vocab[b"<|endoftext|>"] = 0
+        self.vocab[b"<|endoftext|>"] = 0 
         self.vocab_count = 1 
 
         for i in range(97,123): 
             letter = chr(i)
 
-            self.vocab[letter.encode('utf-8')] = self.vocab_count 
+            self.vocab[letter.encode()] = self.vocab_count
             self.vocab_count += 1 
 
         self.merges: list[tuple[bytes, ...]] = []
@@ -51,8 +51,10 @@ class Tokenizer:
 
             word = ",".join(word)
             word = word.encode() 
+            print(f"Word Type: {type(word)}")
 
-            self.vocab[word] += 1
+            self.vocab[word] = self.vocab_count
+            self.vocab_count += 1
 
         print("Pre-Tokenization")
         print(self.vocab)
@@ -62,18 +64,19 @@ class Tokenizer:
         for i in range(6):
 
             for (vocab, count) in self.vocab.items(): 
-                # Temp fix
-                if vocab == b"<|endoftext|>" or vocab == b"":
+                if vocab == b"<|endoftext|>" or vocab == "" or len(vocab) <= 1:
                     continue
 
-                print(f"Word: {vocab}")
+                print(f"Vocab: {vocab}")
+                print(f"Vocab type: {type(vocab)}")
                 letters = vocab.split(b",")
                 for i in range(1, len(letters)): 
                     pair = letters[i - 1: i + 1]
                     pair = b",".join(pair)
 
                     print(f"Pair: {pair}")
-                    self.pairs[pair] += count
+                    # Double check this area
+                    self.pairs[pair] = count
 
             pair_combined = max(self.pairs, key=self.pairs.get)  
             print(f"Pair combined: {pair_combined}")
@@ -87,24 +90,29 @@ class Tokenizer:
             print(f"old_key: {old_key}")
             print(f"new_key: {new_key}")
 
+            print(f"old key type: {type(old_key)}")
+
             new_words = {}
             for (vocab, count) in self.vocab.items():   
-                # Temp fix
-                # vocab = str(vocab)
-                if old_key in vocab:         
+                print(f"Old Key: {old_key}")
+                print(f"vocab bytes: {vocab}")
+
+                if old_key in vocab:      
                     old_word = vocab
                     new_word = vocab.replace(old_key, new_key)
                     print(f"replaced:  {new_word}")
                     new_words[old_word] = new_word 
 
+            self.vocab_count += 1
+            self.vocab[new_key] = self.vocab_count
+
             print("New Words")
             print(new_words)
 
-            for (old_word, new_word) in new_words.items(): 
+            for (old_word, new_word) in new_words.items():
                 self.vocab[new_word] = self.vocab[old_word]
                 del self.vocab[old_word]
 
-            self.vocab_count += 1
             self.pairs.clear() 
 
             print("Vocab: ")
