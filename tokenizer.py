@@ -27,34 +27,53 @@ class Tokenizer:
             self.vocab_count += 1 
 
         self.merges: list[tuple[bytes, ...]] = []
-        self.special_tokens: list[str] = ["<|endoftext|>"]
+        self.special_tokens: list[str] = ["<|endoftext|>", "<|lost|>"]
+
+        self.special_tokens = sorted(self.special_tokens, key=len, reverse=True)
+
 
     def from_files(cls, vocab_filepth, merges_filepth, special_tokens=None): 
         pass
 
     def encode(self, text: str) -> list[int]: 
+        special_token_re = [re.escape(token) for token in self.special_tokens] 
+        special_token_re = "|".join(special_token_re)
+        special_token_re = fr"({special_token_re})"
+
+        print(special_token_re)
+        
         PAT = r"""(<\|endoftext\|>)|(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""" 
 
-        print(f"Input: {text}")        
+        paragraphs = []
+        text_start = 0 
+        text_end = -1 
+        # Remove all special tokens
+        for match in re.finditer(special_token_re, text): 
+            paragraph = match.group(0) 
+            paragraph = paragraph.strip()
+            
+            # Update the end with the start of the special token
+            # and after appending to paragraph update the start with the end 
+            # of the special token
+            text_end = match.start() 
+            paragraphs.append(text[text_start:text_end])
+            text_start = match.end()
 
         # Pre-tokenization - count all the words 
-        for match in re.finditer(PAT, text):
-            word = match.group()
-            print(f"Match: {word}")
-            word = word.strip()
+        for paragraph in paragraphs:
+            for match in re.finditer(PAT, paragraph):
+                word = match.group()
+                print(f"Match: {word}")
+                word = word.strip()
 
-            print(f"Word: {word}")
-            
-            # Probably later down the line we need to handle this
-            if word == "<|endoftext|>":
-                continue
+                print(f"Word: {word}")
 
-            word = ",".join(word)
-            word = word.encode() 
-            print(f"Word Type: {type(word)}")
+                word = ",".join(word)
+                word = word.encode() 
+                print(f"Word Type: {type(word)}")
 
-            self.vocab[word] = self.vocab_count
-            self.vocab_count += 1
+                self.vocab[word] = self.vocab_count
+                self.vocab_count += 1
 
         print("Pre-Tokenization")
         print(self.vocab)
