@@ -207,18 +207,20 @@ def pretokenization(text: str, special_token: bytes) -> dict[bytes, int]:
             # word = word.decode()
             word = word.encode("utf-8")
 
+
             # assert isinstance(word, str)
 
             # word = ",".join(word)
-            word = b",".join([bytes([b]) for b in word]) 
+
+            word_tuple = tuple(bytes([b]) for b in word)
 
             # print(f"Word Type: {type(word)}")
 
             # self.vocab[word] = self.vocab_count
-            if word in vocab: 
-                vocab[word] += 1 
+            if word_tuple in vocab: 
+                vocab[word_tuple] += 1 
             else:
-                vocab[word] = 1
+                vocab[word_tuple] = 1
             # vocab_count += 1
     
     return vocab
@@ -275,23 +277,15 @@ def run_train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
 
         for (word, count) in freq_table.items(): 
 
-
-            # Little hack for ",,"
-            letters = b""
-            if b",," in word: 
-                letters = [b" ", b","]
-            else: 
-                letters = [l for l in word.split(b",") if l != b""]
-            
-            for i in range(1, len(letters)): 
-                pair = (letters[i - 1], letters[i])
+            for i in range(1, len(word)): 
+                pair = (word[i - 1], word[i])
                 pairs[pair] += count
 
         pair_combined = max(pairs, key=lambda k: (pairs[k], k))  
         # print(f"Pair combined: {pair_combined}")
 
         prefix, suffix = pair_combined
-        old_key = prefix + b"," + suffix 
+        old_key = (prefix, suffix)
         new_key = prefix + suffix
         pair = (prefix, suffix)
         merges.append(pair)
@@ -302,18 +296,37 @@ def run_train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
 
         new_freq_table = defaultdict(int)
         for (word, count) in freq_table.items():   
-            
-            if old_key in word:      
-                pattern = rb"(?<![^,])" + re.escape(old_key) + rb"(?![^,])"
-                new_word = re.sub(pattern, new_key, word)
-                new_freq_table[new_word] += count
-            else: 
-                new_freq_table[word] += count
+
+            result = []
+            i = 0
+            while i < len(word):
+                # print(f"Word: {word[i-1]} {word[i]}")
+                if i < len(word) - 1 and old_key[0] == word[i] and old_key[1] == word[i + 1]: 
+                    print(new_key)
+                    result.append(new_key)
+                    i += 2 
+                else: 
+                    result.append(word[i])
+                    i += 1
+
+            new_freq_table[tuple(result)] += count
+
+
+            # if old_key in word:     
+            #     print("here") 
+            #     # pattern = rb"(?<![^,])" + re.escape(old_key) + rb"(?![^,])"
+            #     # new_word = re.sub(pattern, new_key, word)
+
+            #     print(new_word)
+            #     new_word = word
+            #     new_freq_table[new_word] += count
+            # else: 
+            #     new_freq_table[word] += count
 
         freq_table = new_freq_table
         pairs.clear() 
         
-    # print(f"Merges: {merges}")
+    print(f"Merges: {merges}")
     return (vocab, merges)
 
 
