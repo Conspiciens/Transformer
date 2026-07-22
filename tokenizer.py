@@ -4,7 +4,9 @@ import pathlib
 from pretokenization_example import find_chunk_boundaries
 from multiprocessing import Pool
 
+import heapq
 import regex as re
+import cProfile, pstats
 
 
 class multiTokenizer: 
@@ -161,7 +163,7 @@ class Tokenizer:
         pass 
 
 
-def pretokenization(text: str, special_token: bytes) -> dict[bytes, int]:
+def pretokenization(text: str, special_token: list[str]) -> dict[bytes, int]:
     vocab = {} 
 
     paragraphs: list[str] = [] 
@@ -203,25 +205,13 @@ def pretokenization(text: str, special_token: bytes) -> dict[bytes, int]:
     for paragraph in paragraphs:
         for match in re.finditer(PAT, paragraph):
             word = match.group()
-            # print(f"Match: {word}")
-            # word = word.decode()
             word = word.encode("utf-8")
-
-
-            # assert isinstance(word, str)
-
-            # word = ",".join(word)
-
             word_tuple = tuple(bytes([b]) for b in word)
 
-            # print(f"Word Type: {type(word)}")
-
-            # self.vocab[word] = self.vocab_count
             if word_tuple in vocab: 
                 vocab[word_tuple] += 1 
             else:
                 vocab[word_tuple] = 1
-            # vocab_count += 1
     
     return vocab
 
@@ -231,14 +221,15 @@ def callback(arg):
 # Creating function to make it easier to test
 def run_train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]): 
     vocab = {}
-    vocab[b"<|endoftext|>"] = 0
+    vocab[0] = b"<|endoftext|>"
     vocab_count = 1
 
     for i in range(256): 
         letter = chr(i)
 
         # Change this 
-        vocab[bytes([i])] = vocab_count 
+        vocab[vocab_count] = bytes([i])
+        # vocab[bytes([i])] = vocab_count 
         vocab_count += 1
 
 
@@ -253,93 +244,126 @@ def run_train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
 
     with Pool(processes=6) as pool:
         for start, end in zip(boundaries[:-1], boundaries[1:]): 
+            # Example code take from pretokenization example 
             file.seek(start)
             chunk = file.read(end - start).decode("utf-8", errors="ignore")
 
-            process = pool.apply_async(
-                pretokenization, (chunk, special_tokens[0],))
-            running_process.append(process)
+            # process = pool.apply_async(
+            #     pretokenization, (chunk, special_tokens[0],))
 
-        for i in range(len(running_process)): 
-            freq_table = Counter(freq_table) + Counter(running_process[i].get())
-        # vocab = reduce(lambda a, b: Counter(a.get()) + Counter(b), running_process)
+
+            # Using .get() now over the over loop saved us about .1 seconds
+            running_process.append((chunk, special_tokens[0],)) 
+            # i += 1
+        
+        processes = pool.starmap(pretokenization, running_process)
+        freq_table = reduce(lambda a, b: Counter(a) + Counter(b), processes)
     
-    merges = []
+    merges = [None] * (vocab_size - len(vocab)) 
+    y = 0
 
-    vocab = dict(map(reversed, vocab.items()))
+    # merges = []
 
-    # print("Pre-Tokenization")
-    # print(len(freq_table))
+    pairs = defaultdict(int) 
+    for (word, count) in freq_table.items(): 
+        for i in range(1, len(word)): 
+            pair = (word[i - 1], word[i])
+            pairs[pair] += count
+
+
+    # pairs = heapq.heapify(pairs)
+
+    words_changed = {}
+    words_freq = {}
 
     # Tokenization - Begin BPE process
-    pairs = defaultdict(int) 
     while len(vocab) < vocab_size:
+        # pairs = defaultdict(int) 
 
-        for (word, count) in freq_table.items(): 
-
-            for i in range(1, len(word)): 
-                pair = (word[i - 1], word[i])
-                pairs[pair] += count
+        # for (word, count) in freq_table.items(): 
+        #     for i in range(1, len(word)): 
+        #         pair = (word[i - 1], word[i])
+        #         pairs[pair] += count
 
         pair_combined = max(pairs, key=lambda k: (pairs[k], k))  
-        # print(f"Pair combined: {pair_combined}")
-
+        print(f"Max: {pair_combined}")
         prefix, suffix = pair_combined
+
         old_key = (prefix, suffix)
         new_key = prefix + suffix
-        pair = (prefix, suffix)
-        merges.append(pair)
+        
+        merges[y] = old_key 
+        y += 1
 
-        new_token = prefix + suffix
-        vocab[vocab_count] = new_token
+        vocab[vocab_count] = new_key
         vocab_count += 1
 
+        # Updates the frequency table with the new pair and it's following count 
         new_freq_table = defaultdict(int)
         for (word, count) in freq_table.items():   
+            word_len = len(word)
 
-            result = []
-            i = 0
-            while i < len(word):
-                # print(f"Word: {word[i-1]} {word[i]}")
-                if i < len(word) - 1 and old_key[0] == word[i] and old_key[1] == word[i + 1]: 
-                    print(new_key)
-                    result.append(new_key)
-                    i += 2 
-                else: 
-                    result.append(word[i])
+            result = [None] * word_len 
+            idxs = []
+
+            i = 0 
+            word_count = 0
+            pop_count = 0
+            prev_idx = 0
+
+            while word_count < word_len: 
+                if word_count < word_len - 1 and old_key[0] == word[word_count] and old_key[1] == word[word_count + 1]:
+                    result[i] = new_key
+
+                    # Should append when there's an idx that changes
+                    idxs.append(word_count)
+
                     i += 1
+                    word_count += 2
+                    pop_count += 1
+                else: 
+                    result[i] = word[word_count]
+                    word_count += 1
+                    i += 1
+
+            # Ok, it's better to just recount at the end (bruhhhh so easy)
+            if pop_count > 0: 
+                del result[(pop_count * -1):]
+
+                for i in range(1, len(word)): 
+                    pair = (word[i - 1], word[i])
+                    pairs[pair] -= count
+
+                for i in range(1, len(result)): 
+                    pair = (result[i - 1], result[i])
+                    pairs[pair] += count
+
 
             new_freq_table[tuple(result)] += count
 
-
-            # if old_key in word:     
-            #     print("here") 
-            #     # pattern = rb"(?<![^,])" + re.escape(old_key) + rb"(?![^,])"
-            #     # new_word = re.sub(pattern, new_key, word)
-
-            #     print(new_word)
-            #     new_word = word
-            #     new_freq_table[new_word] += count
-            # else: 
-            #     new_freq_table[word] += count
+            if len(idxs) <= 0: 
+                continue 
+            words_changed[word] = idxs
 
         freq_table = new_freq_table
-        pairs.clear() 
+        del pairs[old_key]
         
-    print(f"Merges: {merges}")
     return (vocab, merges)
 
 
 if __name__ == '__main__': 
     # bpe = Tokenizer("test", 10, ["<|endoftext|>"]) 
+    profile = cProfile.Profile()
     FIXTURES_PATH = (pathlib.Path(__file__).resolve().parent) / "tests" / "fixtures"
 
     input_path = FIXTURES_PATH / "corpus.en"
+    profile.enable()
     (vocab, merges) = run_train_bpe(
         input_path=input_path,
         vocab_size=500,
         special_tokens=["<|endoftext|>"]
     )
+    profile.disable()
 
-    print(f"Vocab: {vocab}")
-    print(f"Merges: {merges}")
+    stats = pstats.Stats(profile).sort_stats('cumulative')
+    stats.print_stats(30)
