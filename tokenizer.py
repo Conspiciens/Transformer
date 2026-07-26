@@ -1,56 +1,123 @@
-from collections import defaultdict, Counter
+from collections import defaultdict, Counter, Iterator
 from functools import reduce
 import pathlib
 from pretokenization_example import find_chunk_boundaries
 from multiprocessing import Pool
 
 import heapq
+import json
 import regex as re
 import cProfile, pstats
 
 
-class multiTokenizer: 
-    def __init__(self):
-        self.queue = []
-
-    def give_job(): 
-        pass
-
 class Tokenizer: 
-    def __init__(self, input_path: str, vocab_size: int, special_tokens: list[str]): 
-        self.input_path = input_path
-        self.vocab_size = vocab_size
+    def __init__(self, vocab: dict, merges: list, special_tokens: list[str] | None): 
+        self.vocab: dict[int, bytes] = vocab
+        self.merges: list[tuple(bytes, bytes)] = merges
+        self.special_tokens: list[str] | None = special_tokens
 
-        self.jobs: list[tuple(str, str)] = []
+        self.reverse_ids: dict[bytes, int] = None
 
-        self.vocab = defaultdict(int) 
-        self.vocab[0] = b"<|endoftext|>" 
-        self.vocab_count = 1 
-
-        for i in range(97,123): 
-            letter = chr(i)
-
-            self.vocab[self.vocab_count] = letter.encode()
-            self.vocab_count += 1 
-
-        self.merges: list[tuple[bytes, ...]] = []
-        # self.special_tokens: list[str] = ["<|endoftext|>", "<|lost|>"]
-        self.special_tokens: list[str] = special_tokens
-
-        self.special_tokens = sorted(self.special_tokens, key=len, reverse=True)
+        ids = 0
+        for suffix, prefix in self.merges: 
+            phrase = suffix + prefix 
+            self.reverse_ids[phrase] = ids 
+            ids += 1 
 
 
-    def from_files(cls, vocab_filepth, merges_filepth, special_tokens=None): 
-        pass
+    # It's a class method, means the class method can be called without initating
+    # the class 
+    @classmethod
+    def from_files(cls, vocab_filepth: str, merges_filepth: str, special_tokens=None) -> Tokenzier: 
+
+        if vocab_filepth.suffix != ".json": 
+            raise ValueError("Incorrect file type for vocab file, should be .json")
+        elif merges_filepth.suffix != ".txt": 
+            raise ValueError("Incorrect file type for merges file, should be .txt")
+        
+        vocab_file = open(vocab_filepth) 
+        merges_file = open(merges_filepth)
+
+        cls.vocab= dict(merges_js)
+
+        ids = 0
+        for line in merges_file.readline(): 
+            (prefix, suffix) = line.split(" ")
+            cls.merges.append((prefix, suffix))
+
+            phrase += bytes(prefix, "uft-8") + bytes(suffix, "utf-8")
+            cls.reverse_ids[(prefix, suffix)] = ids 
+            ids += 1
+
+        cls.special_tokens = special_tokens
+
+        return cls 
+        
 
     def encode(self, text: str) -> list[int]: 
+        ids = []
+        PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
+
+        # Split each word up, then we want to check if they don't exist, 
+        # if they do exist then continue merging till you find the final subwords 
+        for word in re.finditer(PAT, text):
+            word = match.group()
+            word = word.encode("utf-8")
+
+            current_merge = None
+            idx = 1
+            lower_limit = 0
+            upper_limit = 0
+            
+            # ['r' 'a' 'n' 'd' 'o' 'm']
+
+            # Find a way to find the words that require merging first, afterwards have to slowly append 
+            # other chars before determining whether to add them as ids
+
+            # Consider the fact that merges are put in a priority queue and spit out in that format 
+            # Well the solution is a doubly linked list! I'll attempt with a list then go from there 
+
+            # When using a list we want to consider using a prority queue to check the rank of each merge
+            # For now we build with a simple list that cause a O(n^2) and excessive memory usage
+            while True: 
+
+                rank_queue = []
+                for idx in range(1, len(word)): 
+                    pair = (word[idx - 1], word[idx])
+                    phrase = pair[0] + pair[1]
+
+                    if self.reverse_ids.get(phrase) != None: 
+                        heapq.heappush(rank_queue, (self.reverse_ids.get(phrase), (idx - 1, idx)))
+                
+                if len(rank_queue) <= 0: 
+                    break 
+
+                top_pair = rank_queue[0]
+                
+                word[top_pair[1][0]] += word[top_pair[1][1]]
+                del word[top_pair[1][1]]
+
+
+            for subwords in word: 
+                ids.append(self.reverse_ids.get(subwords))
+
+            
+            return ids
+                
+
+    def encode_iterable(self, iterable: Iterator[str]) -> Iterator[list[int]]: 
         pass
 
-    def encode_iterable(): 
-        pass
+    def decode(self, ids: list[int]) -> str: 
+        sentence = ""
 
-    def decode(): 
-        pass 
+        for code in ids: 
+            if not dict[code]: 
+                sentence += b"U+FFFD"    
+            sentence += dict[code].decode("utf-8")
+
+        return sentence
+            
 
 
 def pretokenization(text: str, special_token: list[str]) -> dict[bytes, int]:
@@ -62,6 +129,7 @@ def pretokenization(text: str, special_token: list[str]) -> dict[bytes, int]:
     special_token_re = "|".join(special_token_re)
     special_token_re = fr"({special_token_re})"
 
+    # Splits the sentence into words :)
     PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
 
     text_start = 0 
@@ -83,6 +151,7 @@ def pretokenization(text: str, special_token: list[str]) -> dict[bytes, int]:
     paragraphs.append(text[text_start:])
 
     for paragraph in paragraphs:
+        # Reminder finditer doesn't store the word, finds the next when executed 
         for match in re.finditer(PAT, paragraph):
             word = match.group()
             word = word.encode("utf-8")
@@ -174,7 +243,6 @@ def run_train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
             i = 0 
             word_count = 0
             pop_count = 0
-            prev_idx = 0
 
             while word_count < word_len: 
                 if word_count < word_len - 1 and old_key[0] == word[word_count] and old_key[1] == word[word_count + 1]:
@@ -189,7 +257,7 @@ def run_train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
                     word_count += 1
                     i += 1
 
-            # Ok, it's better to just recount at the end (bruhhhh so easy)
+            # Ok, it's better to just recount at the end (bruhhhh how did I miss this)
             if pop_count > 0: 
                 del result[(pop_count * -1):]
 
@@ -212,17 +280,17 @@ def run_train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
 
 if __name__ == '__main__': 
     # bpe = Tokenizer("test", 10, ["<|endoftext|>"]) 
-    profile = cProfile.Profile()
-    FIXTURES_PATH = (pathlib.Path(__file__).resolve().parent) / "tests" / "fixtures"
+    # profile = cProfile.Profile()
+    # FIXTURES_PATH = (pathlib.Path(__file__).resolve().parent) / "tests" / "fixtures"
 
-    input_path = FIXTURES_PATH / "corpus.en"
-    profile.enable()
-    (vocab, merges) = run_train_bpe(
-        input_path=input_path,
-        vocab_size=500,
-        special_tokens=["<|endoftext|>"]
-    )
-    profile.disable()
+    # input_path = FIXTURES_PATH / "corpus.en"
+    # profile.enable()
+    # (vocab, merges) = run_train_bpe(
+        # input_path=input_path,
+        # vocab_size=500,
+        # special_tokens=["<|endoftext|>"]
+    # )
+    # profile.disable()
 
-    stats = pstats.Stats(profile).sort_stats('cumulative')
-    stats.print_stats(30)
+    # stats = pstats.Stats(profile).sort_stats('cumulative')
+    # stats.print_stats(30)
