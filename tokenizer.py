@@ -63,6 +63,7 @@ class Tokenizer:
         for word in re.finditer(PAT, text):
             word = match.group()
             word = word.encode("utf-8")
+            word = [bytes([b]) for b in word]
 
             current_merge = None
             idx = 1
@@ -106,7 +107,43 @@ class Tokenizer:
                 
 
     def encode_iterable(self, iterable: Iterator[str]) -> Iterator[list[int]]: 
-        pass
+        PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
+
+        for senetence in iterable: 
+            ids = [] 
+            for word in re.finditer(PAT, sentence): 
+                word = match.group()
+                word = word.encode("utf-8")
+
+                # Slicing perserves the byte object by storing within [] 
+                word = [bytes([b]) for b in word]
+
+                while True: 
+
+                    rank_queue = []
+                    for idx in range(1, len(word)): 
+                        pair = (word[idx - 1], word[idx])
+                        phrase = pair[0] + pair[1]
+
+                        if self.reverse_ids.get(phrase) != None: 
+                            heapq.heappush(rank_queue, (self.reverse_ids.get(phrase), (idx - 1, idx)))
+
+                    if len(rank_queue) <= 0: 
+                        break 
+
+                    top_pair = rank_queue[0]
+
+                    word[top_pair[1][0]] += word[top_pair[1][1]]
+                    del word[top_pair[1][1]]
+
+                # Consider that these subwords may be unknown! 
+                for subwords in words: 
+                    ids.append(self.reverse_ids.get(subwords))
+            
+            yield ids
+
+                
+            
 
     def decode(self, ids: list[int]) -> str: 
         sentence = ""
