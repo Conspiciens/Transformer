@@ -131,41 +131,73 @@ class Tokenizer:
         return ids
                 
 
-    def encode_iterable(self, iterable: Iterator[str]) -> Iterator[list[int]]: 
+    def encode_iterable(self, iterable: Iterator[str]) -> Iterator[int]: 
         PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
 
+        special_token_re = ""
+        if self.special_tokens != None: 
+            # Consider redoing the sorting part? 
+            special_token_re = [re.escape(token) for token in self.special_tokens]
+            special_token_re = sorted(special_token_re, key=len, reverse=True)
+            special_token_re = "|".join(special_token_re)
+            special_token_re = fr"({special_token_re})"
+
         for sentence in iterable: 
-            ids = [] 
-            for match in re.finditer(PAT, sentence): 
-                word = match.group()
-                word = word.encode("utf-8")
+            text_start = 0 
+            text_end = -1 
+            chunks = [] 
+            special_token_found = []
+            for match in re.finditer(special_token_re, sentence): 
+                token = match.group(0)
 
-                # Slicing perserves the byte object by storing within [] 
-                word = [bytes([b]) for b in word]
+                if not token or (self.special_tokens is not None and token not in self.special_tokens): 
+                    continue 
+                else: 
+                    special_token_found.append(token)
 
-                while True: 
+                text_end = match.start()
+                chunks.append(sentence[text_start:text_end])
+                text_start = match.end()
 
-                    rank_queue = []
-                    for idx in range(1, len(word)): 
-                        pair = (word[idx - 1], word[idx])
-                        phrase = pair[0] + pair[1]
+            chunks.append(sentence[text_start:])
 
-                        if self.reverse_ids.get(phrase) != None: 
-                            heapq.heappush(rank_queue, (self.reverse_ids.get(phrase), (idx - 1, idx)))
+            for i, chunk in enumerate(chunks):
+                if chunk == "": 
+                    pass
+                else:
+                    for match in re.finditer(PAT, chunk): 
+                        word = match.group()
+                        word = word.encode("utf-8")
 
-                    if len(rank_queue) <= 0: 
-                        break 
+                        # Slicing perserves the byte object by storing within [] 
+                        word = [bytes([b]) for b in word]
 
-                    top_pair = rank_queue[0]
+                        while True: 
 
-                    word[top_pair[1][0]] += word[top_pair[1][1]]
-                    del word[top_pair[1][1]]
+                            rank_queue = []
+                            for idx in range(1, len(word)): 
+                                pair = (word[idx - 1], word[idx])
+                                phrase = pair[0] + pair[1]
 
-                # Consider that these subwords may be unknown! 
-                for subwords in word: 
-                    ids.append(self.reverse_ids.get(subwords))
+                                if self.reverse_ids.get(phrase) != None: 
+                                    heapq.heappush(rank_queue, (self.reverse_ids.get(phrase), (idx - 1, idx)))
+
+                            if len(rank_queue) <= 0: 
+                                break 
+
+                            top_pair = rank_queue[0]
+
+                            word[top_pair[1][0]] += word[top_pair[1][1]]
+                            del word[top_pair[1][1]]
+
+                        # Consider that these subwords may be unknown! 
+                        for subwords in word: 
+                            # ids.append(self.reverse_ids.get(subwords))
+                            yield self.reverse_ids.get(subwords)
+
+                if i + 1 < len(chunks): 
+                    yield self.reverse_ids.get(special_token_found[i].encode("utf-8"))
             
-            yield ids
 
                 
             
