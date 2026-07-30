@@ -1,4 +1,5 @@
-from collections import defaultdict, Counter, Iterator
+from collections import defaultdict, Counter 
+from collections.abc import Iterator
 from functools import reduce
 import pathlib
 from pretokenization_example import find_chunk_boundaries
@@ -16,19 +17,16 @@ class Tokenizer:
         self.merges: list[tuple(bytes, bytes)] = merges
         self.special_tokens: list[str] | None = special_tokens
 
-        self.reverse_ids: dict[bytes, int] = None
+        self.reverse_ids: dict[bytes, int] = {}
 
-        ids = 0
-        for suffix, prefix in self.merges: 
-            phrase = suffix + prefix 
-            self.reverse_ids[phrase] = ids 
-            ids += 1 
+        for num, word in self.vocab.items(): 
+            self.reverse_ids[word] = num 
 
 
     # It's a class method, means the class method can be called without initating
     # the class 
     @classmethod
-    def from_files(cls, vocab_filepth: str, merges_filepth: str, special_tokens=None) -> Tokenzier: 
+    def from_files(cls, vocab_filepth: str, merges_filepth: str, special_tokens=None): 
 
         if vocab_filepth.suffix != ".json": 
             raise ValueError("Incorrect file type for vocab file, should be .json")
@@ -38,7 +36,7 @@ class Tokenizer:
         vocab_file = open(vocab_filepth) 
         merges_file = open(merges_filepth)
 
-        cls.vocab= dict(merges_js)
+        cls.vocab = json.loads(vocab_file)
 
         ids = 0
         for line in merges_file.readline(): 
@@ -58,60 +56,87 @@ class Tokenizer:
         ids = []
         PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
 
+        special_token_re = ""
+        if self.special_tokens != None: 
+            # Consider redoing the sorting part? 
+            special_token_re = [re.escape(token) for token in self.special_tokens]
+            special_token_re = sorted(special_token_re, key=len, reverse=True)
+            special_token_re = "|".join(special_token_re)
+            special_token_re = fr"({special_token_re})"
+
+        text_start = 0 
+        text_end = -1 
+        chunks = [] 
+        special_token_found = []
+        for match in re.finditer(special_token_re, text): 
+            token = match.group(0)
+
+            if not token or (self.special_tokens is not None and token not in self.special_tokens): 
+                continue 
+            else: 
+                special_token_found.append(token)
+            
+            text_end = match.start()
+            chunks.append(text[text_start:text_end])
+            text_start = match.end()
+            
+        chunks.append(text[text_start:])
         # Split each word up, then we want to check if they don't exist, 
         # if they do exist then continue merging till you find the final subwords 
-        for word in re.finditer(PAT, text):
-            word = match.group()
-            word = word.encode("utf-8")
-            word = [bytes([b]) for b in word]
+        for i, chunk in enumerate(chunks):
+            if chunk == "": 
+                pass
+            else:
+                for match in re.finditer(PAT, chunk):
+                    word = match.group(0)
+                    word = word.encode("utf-8")
+                    word = [bytes([b]) for b in word]
 
-            current_merge = None
-            idx = 1
-            lower_limit = 0
-            upper_limit = 0
+                    # ['r' 'a' 'n' 'd' 'o' 'm']
+
+                    # Find a way to find the words that require merging first, afterwards have to slowly append 
+                    # other chars before determining whether to add them as ids
+
+                    # Consider the fact that merges are put in a priority queue and spit out in that format 
+                    # Well the solution is a doubly linked list! I'll attempt with a list then go from there 
+
+                    # When using a list we want to consider using a prority queue to check the rank of each merge
+                    # For now we build with a simple list that cause a O(n^2) and excessive memory usage
+                    while True: 
+
+                        rank_queue = []
+                        for idx in range(1, len(word)): 
+                            pair = (word[idx - 1], word[idx])
+                            phrase = pair[0] + pair[1]
+
+                            if self.reverse_ids.get(phrase) != None: 
+                                heapq.heappush(rank_queue, (self.reverse_ids.get(phrase), (idx - 1, idx)))
+
+                        if len(rank_queue) <= 0 or len(word) <= 1: 
+                            break 
+
+                        top_pair = rank_queue[0]
+
+                        word[top_pair[1][0]] += word[top_pair[1][1]]
+                        del word[top_pair[1][1]]
+
+
+                    for subwords in word: 
+                        ids.append(self.reverse_ids.get(subwords))
             
-            # ['r' 'a' 'n' 'd' 'o' 'm']
+            # Consider just popping instead 
+            if i + 1 < len(chunks): 
+                ids.append(self.reverse_ids.get(special_token_found[i].encode("utf-8")))
 
-            # Find a way to find the words that require merging first, afterwards have to slowly append 
-            # other chars before determining whether to add them as ids
-
-            # Consider the fact that merges are put in a priority queue and spit out in that format 
-            # Well the solution is a doubly linked list! I'll attempt with a list then go from there 
-
-            # When using a list we want to consider using a prority queue to check the rank of each merge
-            # For now we build with a simple list that cause a O(n^2) and excessive memory usage
-            while True: 
-
-                rank_queue = []
-                for idx in range(1, len(word)): 
-                    pair = (word[idx - 1], word[idx])
-                    phrase = pair[0] + pair[1]
-
-                    if self.reverse_ids.get(phrase) != None: 
-                        heapq.heappush(rank_queue, (self.reverse_ids.get(phrase), (idx - 1, idx)))
-                
-                if len(rank_queue) <= 0: 
-                    break 
-
-                top_pair = rank_queue[0]
-                
-                word[top_pair[1][0]] += word[top_pair[1][1]]
-                del word[top_pair[1][1]]
-
-
-            for subwords in word: 
-                ids.append(self.reverse_ids.get(subwords))
-
-            
-            return ids
+        return ids
                 
 
     def encode_iterable(self, iterable: Iterator[str]) -> Iterator[list[int]]: 
         PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
 
-        for senetence in iterable: 
+        for sentence in iterable: 
             ids = [] 
-            for word in re.finditer(PAT, sentence): 
+            for match in re.finditer(PAT, sentence): 
                 word = match.group()
                 word = word.encode("utf-8")
 
@@ -137,7 +162,7 @@ class Tokenizer:
                     del word[top_pair[1][1]]
 
                 # Consider that these subwords may be unknown! 
-                for subwords in words: 
+                for subwords in word: 
                     ids.append(self.reverse_ids.get(subwords))
             
             yield ids
@@ -148,10 +173,26 @@ class Tokenizer:
     def decode(self, ids: list[int]) -> str: 
         sentence = ""
 
+        if ids == None or len(ids) <= 0: 
+            return sentence
+
+        phrase = b""
         for code in ids: 
-            if not dict[code]: 
-                sentence += b"U+FFFD"    
-            sentence += dict[code].decode("utf-8")
+            # consider unicode such as emoji's that may be split
+            # it may be unknown
+
+
+            # There are certain bytes that are known as continuation byte! 
+            # UTF-8 has various formats!
+            phrase += self.vocab.get(code)
+            str_word = phrase.decode("utf-8", errors="replace")
+
+            if 128 <= phrase[-1] <= 244 and "\ufffd" in str_word:
+                continue 
+
+            sentence += str_word
+            phrase = b""
+                
 
         return sentence
             
@@ -172,7 +213,7 @@ def pretokenization(text: str, special_token: list[str]) -> dict[bytes, int]:
     text_start = 0 
     text_end = -1 
     for match in re.finditer(special_token_re, text): 
-        paragraph = match.group(0) 
+        # paragraph = match.group(0) 
         
         # Update the end with the start of the special token
         # and after appending to paragraph update the start with the end 
@@ -316,6 +357,7 @@ def run_train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
 
 
 if __name__ == '__main__': 
+    pass
     # bpe = Tokenizer("test", 10, ["<|endoftext|>"]) 
     # profile = cProfile.Profile()
     # FIXTURES_PATH = (pathlib.Path(__file__).resolve().parent) / "tests" / "fixtures"
