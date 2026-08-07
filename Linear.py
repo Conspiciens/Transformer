@@ -20,9 +20,13 @@ class Linear(torch.nn.Module):
         torch.nn.init.trunc_normal_(self.W, mean=0, std=1.0, a=-3.0, b=3.0)
         
     def forward(self, x: torch.Tensor) -> torch.Tensor: 
-        print("Weights:" + str(self.W.size()))
-        print("Vector: " + str(x.size()))
         
-        self.out_features = x @ self.W.T
-        return self.out_features
+        # x @ self.W.T vs self.W.T @ x 
+        # (4, 12, 64) @ (128, 64) vs (128, 64) @ (4, 12, 64)
+        # (256, 64) @ (128, 64) vs (128, 64) @ ()
+        
+
+        # x = (4, 12, 64) W = (128, 64) but T = (64, 128)
+        # x
+        return x @ self.W.T
         
