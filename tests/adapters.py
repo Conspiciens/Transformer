@@ -13,6 +13,7 @@ from torch import Tensor
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from tokenizer import Tokenizer 
+from Linear import Linear 
 
 
 def run_linear(
@@ -33,8 +34,12 @@ def run_linear(
     Returns:
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
+    linear_transform = Linear(d_in, d_out)
+    linear_transform.load_state_dict({'W': weights})
 
-    raise NotImplementedError
+    return linear_transform.forward(in_features)    
+
+     
 
 
 def run_embedding(
