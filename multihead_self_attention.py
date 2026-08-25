@@ -63,16 +63,14 @@ class multihead_self_attention(torch.nn.Module):
         # We only need one seq_len 1d vector
         # All the tokens are going to be taking up the same position
 
-        # Q_reshape = rope_c.forward(Q_reshape, positions)
-        # K_reshape = rope_c.forward(K_reshape, positions)
+        Q_reshape = rope_c.forward(Q_reshape, positions)
+        K_reshape = rope_c.forward(K_reshape, positions)
 
         # [batch_size, heads, seq_len (tokens), features]
         # mask = Q_reshape @ torch.transpose(K_reshape, -2, -1)
         # mask = torch.tril(mask, diagonal=0).bool()
 
         mask = torch.tril(torch.ones((seq_len, seq_len)), diagonal=0).bool()
-
-        heads = torch.rand(4, 4, 12, 16)
         print(f"Heads: {self.num_heads}")
         att = scaled_dot_product_attention(Q_reshape, K_reshape, V_reshape, mask)
 
